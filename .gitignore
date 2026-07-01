@@ -1,0 +1,13 @@
+# Binaries
+*.exe
+*.out
+bin/
+
+# Test artifacts
+*.test
+coverage.out
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
