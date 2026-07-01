@@ -14,7 +14,8 @@ func TestValidateXml(t *testing.T) {
 	  "ves": {"vesid": "eu.peppol.bis3:invoice:2024.5"},
 	  "results": [
 	    {
-	      "success": false,
+	      "success": "FALSE",
+	      "validity": "invalid",
 	      "artifactType": "xsd",
 	      "artifactPath": "peppol/CII/xsd/CrossIndustryInvoice.xsd",
 	      "items": [
@@ -68,6 +69,9 @@ func TestValidateXml(t *testing.T) {
 	layer := resp.Results[0]
 	if layer.ValidationType != "xsd" {
 		t.Errorf("ValidationType = %q", layer.ValidationType)
+	}
+	if layer.Success {
+		t.Error("layer.Success = true, want false (phorm sent success:\"FALSE\"/validity:invalid)")
 	}
 	if len(layer.Errors) != 1 || len(layer.Warnings) != 1 {
 		t.Fatalf("errors=%d warnings=%d, want 1/1", len(layer.Errors), len(layer.Warnings))
