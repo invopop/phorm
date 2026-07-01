@@ -1,0 +1,33 @@
+name: Auto-Version
+
+# Auto-tags a new semver release on every merge to main, so consumers can
+# `go get github.com/invopop/phorm@vX.Y.Z` without a manual tag step. Matches the
+# convention used by other invopop Go libraries (lib, client.go, gobl.ubl).
+#
+# Bump size is derived from commit messages (#major / #minor / #patch / #none);
+# the default when none is present is set by DEFAULT_BUMP below.
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  tag:
+    name: Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+
+      - name: Bump version and push tag
+        id: bump
+        uses: anothrNick/github-tag-action@1.52.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_BRANCHES: main
+          WITH_V: true
+          DEFAULT_BUMP: patch
