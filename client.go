@@ -151,7 +151,7 @@ func (c *Client) do(req *http.Request) ([]byte, error) {
 // --- phorm JSON wire types (phive's JsonValidationResultListHelper schema) ---
 
 type phormValidationResult struct {
-	Success bool `json:"success"`
+	Success flexBool `json:"success"`
 	Ves     *struct {
 		VesID string `json:"vesid"`
 	} `json:"ves"`
@@ -159,10 +159,32 @@ type phormValidationResult struct {
 }
 
 type phormLayerResult struct {
-	Success      bool             `json:"success"`
+	// phorm reports per-result success as a string ("TRUE"/"FALSE") and also
+	// exposes validity ("valid"/"invalid"); flexBool tolerates both string and
+	// boolean encodings.
+	Success      flexBool         `json:"success"`
+	Validity     string           `json:"validity"`
 	ArtifactType string           `json:"artifactType"`
 	ArtifactPath string           `json:"artifactPath"`
 	Items        []phormErrorItem `json:"items"`
+}
+
+// flexBool decodes a JSON boolean that phorm emits inconsistently: as a real
+// boolean at the top level ("success":false) but as a string on each result
+// ("success":"FALSE"). Decoding either into a plain bool fails and, upstream,
+// silently turns a failed validation into a skipped one — so be tolerant.
+type flexBool bool
+
+func (b *flexBool) UnmarshalJSON(data []byte) error {
+	switch strings.ToUpper(strings.Trim(string(data), `"`)) {
+	case "TRUE":
+		*b = true
+	case "FALSE", "NULL", "":
+		*b = false
+	default:
+		return fmt.Errorf("phorm: unexpected boolean value %s", data)
+	}
+	return nil
 }
 
 type phormErrorItem struct {
@@ -184,7 +206,7 @@ type phormVesID struct {
 }
 
 func (r phormValidationResult) toResponse() *ValidateXmlResponse {
-	out := &ValidateXmlResponse{Success: r.Success}
+	out := &ValidateXmlResponse{Success: bool(r.Success)}
 	if r.Ves != nil {
 		out.ResolvedVesid = r.Ves.VesID
 	}
@@ -195,10 +217,15 @@ func (r phormValidationResult) toResponse() *ValidateXmlResponse {
 }
 
 func (lr phormLayerResult) toLayer() *ValidationLayerResult {
+	// Prefer the explicit validity flag when present; fall back to success.
+	success := bool(lr.Success)
+	if lr.Validity != "" {
+		success = strings.EqualFold(lr.Validity, "valid")
+	}
 	layer := &ValidationLayerResult{
 		ValidationType: lr.ArtifactType,
 		ArtifactId:     lr.ArtifactPath,
-		Success:        lr.Success,
+		Success:        success,
 	}
 	// phorm returns a single `items` array; split it back into errors/warnings
 	// by severity so callers that read .Errors and .Warnings keep working.
