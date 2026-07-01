@@ -21,6 +21,11 @@ const (
 	defaultTimeout = 60 * time.Second
 	// tokenHeader is phorm's authentication header (phorm.api.requiredtoken).
 	tokenHeader = "X-Token"
+	// DefaultToken is phorm's built-in default X-Token. phorm always requires a
+	// matching non-empty token and cannot disable auth, but when it is only
+	// reachable inside a trusted network the token is not a security boundary, so
+	// New falls back to this when no token is supplied.
+	DefaultToken = "phorm-dev-token"
 )
 
 // Client talks to a phorm validation service over HTTP.
@@ -41,8 +46,12 @@ func WithHTTPClient(h *http.Client) Option {
 
 // New creates a phorm client for the service at baseURL (e.g.
 // "http://phorm:8080") authenticating with the given X-Token value. An empty
-// token omits the header (useful only if the server has auth disabled).
+// token falls back to DefaultToken, so callers pointing at a phorm that uses the
+// stock token need not configure one.
 func New(baseURL, token string, opts ...Option) *Client {
+	if token == "" {
+		token = DefaultToken
+	}
 	c := &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,

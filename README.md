@@ -34,7 +34,9 @@ import (
 )
 
 func main() {
-	// baseURL of the phorm service and its X-Token auth value.
+	// baseURL of the phorm service and its X-Token auth value. An empty token
+	// falls back to phorm.DefaultToken, so callers using phorm's stock token can
+	// pass "".
 	client := phorm.New("http://phorm:8080", os.Getenv("PHORM_TOKEN"))
 	ctx := context.Background()
 

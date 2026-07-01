@@ -81,6 +81,25 @@ func TestValidateXml(t *testing.T) {
 	}
 }
 
+func TestDefaultTokenFallback(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Token")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"results":[]}`)
+	}))
+	defer srv.Close()
+
+	// No token supplied -> the client must send phorm's default token.
+	c := New(srv.URL, "")
+	if _, err := c.ValidateXml(context.Background(), &ValidateXmlRequest{Vesid: "x", XmlContent: []byte("<a/>")}); err != nil {
+		t.Fatalf("ValidateXml: %v", err)
+	}
+	if got != DefaultToken {
+		t.Errorf("X-Token = %q, want default %q", got, DefaultToken)
+	}
+}
+
 func TestValidateXmlHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
