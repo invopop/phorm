@@ -1,0 +1,25 @@
+name: Test Go
+
+# Runs on every push/PR so the auto-tag on main only ever tags tested code
+# (make this a required status check on the main branch protection rule).
+
+on: [push]
+
+jobs:
+  test:
+    name: Vet, Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
