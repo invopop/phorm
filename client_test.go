@@ -85,6 +85,64 @@ func TestValidateXml(t *testing.T) {
 	}
 }
 
+// A failing layer makes phive skip the rest, reported as success:"UNDEFINED".
+func TestValidateXmlUndefinedTriState(t *testing.T) {
+	const body = `{
+	  "success": false,
+	  "interrupted": true,
+	  "results": [
+	    {
+	      "success": "FALSE",
+	      "validity": "invalid",
+	      "artifactType": "schematron",
+	      "artifactPath": "peppol/sch/PEPPOL-EN16931-UBL.sch",
+	      "items": [{"errorLevel":"ERROR","errorText":"BR-CL-01 failed","test":"BR-CL-01"}]
+	    },
+	    {
+	      "success": "UNDEFINED",
+	      "validity": "skipped",
+	      "artifactType": "edifact",
+	      "artifactPath": "peppol/sch/PEPPOL-EN16931-CII.sch",
+	      "items": []
+	    },
+	    {
+	      "success": "UNDEFINED",
+	      "validity": "unclear",
+	      "artifactType": "xsd",
+	      "artifactPath": "peppol/CII/xsd/CrossIndustryInvoice.xsd",
+	      "items": []
+	    }
+	  ]
+	}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	resp, err := New(srv.URL, "tok").ValidateXml(context.Background(), &ValidateXmlRequest{
+		Vesid: "eu.peppol.bis3:invoice:2024.5", XmlContent: []byte("<xml/>"),
+	})
+	if err != nil {
+		t.Fatalf("ValidateXml: %v", err)
+	}
+	if resp.Success {
+		t.Error("Success = true, want false")
+	}
+	if len(resp.Results) != 3 {
+		t.Fatalf("Results = %d, want 3", len(resp.Results))
+	}
+	for i, layer := range resp.Results {
+		if layer.Success {
+			t.Errorf("Results[%d].Success = true, want false", i)
+		}
+	}
+	if len(resp.Results[0].Errors) != 1 {
+		t.Errorf("Results[0].Errors = %d, want 1", len(resp.Results[0].Errors))
+	}
+}
+
 func TestDefaultTokenFallback(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

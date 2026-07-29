@@ -159,9 +159,6 @@ type phormValidationResult struct {
 }
 
 type phormLayerResult struct {
-	// phorm reports per-result success as a string ("TRUE"/"FALSE") and also
-	// exposes validity ("valid"/"invalid"); flexBool tolerates both string and
-	// boolean encodings.
 	Success      flexBool         `json:"success"`
 	Validity     string           `json:"validity"`
 	ArtifactType string           `json:"artifactType"`
@@ -169,21 +166,13 @@ type phormLayerResult struct {
 	Items        []phormErrorItem `json:"items"`
 }
 
-// flexBool decodes a JSON boolean that phorm emits inconsistently: as a real
-// boolean at the top level ("success":false) but as a string on each result
-// ("success":"FALSE"). Decoding either into a plain bool fails and, upstream,
-// silently turns a failed validation into a skipped one — so be tolerant.
+// flexBool decodes a real boolean at the top level and phive's tri-state string
+// ("TRUE"/"FALSE"/"UNDEFINED") on each result. Never fails: rejecting a value
+// here would discard the whole response, findings included.
 type flexBool bool
 
 func (b *flexBool) UnmarshalJSON(data []byte) error {
-	switch strings.ToUpper(strings.Trim(string(data), `"`)) {
-	case "TRUE":
-		*b = true
-	case "FALSE", "NULL", "":
-		*b = false
-	default:
-		return fmt.Errorf("phorm: unexpected boolean value %s", data)
-	}
+	*b = flexBool(strings.EqualFold(strings.Trim(string(data), `"`), "true"))
 	return nil
 }
 
