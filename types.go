@@ -68,10 +68,7 @@ type ValidationLayerResult struct {
 type ValidationError struct {
 	// Level is "ERROR", "WARN", etc. (phorm's `errorLevel`).
 	Level string
-	// ErrorID is the identifier of the rule that produced the finding
-	// (phorm's `errorID`), e.g. "BR-61", "UBL-CR-397" or "BR-FR-05_BT-22-1".
-	// Empty when the finding is not tied to a rule (e.g. XSLT
-	// transformation warnings).
+	// ErrorID is the rule identifier (phorm's `errorID`), e.g. "UBL-CR-397".
 	ErrorID string
 	// Message is phorm's `errorText`.
 	Message string
