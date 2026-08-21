@@ -241,6 +241,7 @@ func (it phormErrorItem) toError() *ValidationError {
 	}
 	return &ValidationError{
 		Level:    it.ErrorLevel,
+		ErrorID:  it.ErrorID,
 		Message:  it.ErrorText,
 		Location: loc,
 		Xpath:    it.ErrorFieldName,

@@ -68,6 +68,8 @@ type ValidationLayerResult struct {
 type ValidationError struct {
 	// Level is "ERROR", "WARN", etc. (phorm's `errorLevel`).
 	Level string
+	// ErrorID is the rule identifier (phorm's `errorID`), e.g. "UBL-CR-397".
+	ErrorID string
 	// Message is phorm's `errorText`.
 	Message string
 	// Location is a human-readable "line N, col M" from phorm's `errorLocationObj`.
