@@ -19,8 +19,8 @@ func TestValidateXml(t *testing.T) {
 	      "artifactType": "xsd",
 	      "artifactPath": "peppol/CII/xsd/CrossIndustryInvoice.xsd",
 	      "items": [
-	        {"errorLevel":"ERROR","errorText":"boom","test":"BR-01","errorFieldName":"/Invoice[1]","errorLocationObj":{"line":12,"col":3}},
-	        {"errorLevel":"WARN","errorText":"careful","test":"BR-02"},
+	        {"errorLevel":"ERROR","errorID":"BR-01","errorText":"boom","test":"(cbc:ID) != ''","errorFieldName":"/Invoice[1]","errorLocationObj":{"line":12,"col":3}},
+	        {"errorLevel":"WARN","errorID":"BR-02","errorText":"careful","test":"not(cbc:Note)"},
 	        {"errorLevel":"SUCCESS","errorText":"ignored"}
 	      ]
 	    }
@@ -76,11 +76,11 @@ func TestValidateXml(t *testing.T) {
 	if len(layer.Errors) != 1 || len(layer.Warnings) != 1 {
 		t.Fatalf("errors=%d warnings=%d, want 1/1", len(layer.Errors), len(layer.Warnings))
 	}
-	if e := layer.Errors[0]; e.Message != "boom" || e.TestId != "BR-01" ||
+	if e := layer.Errors[0]; e.Message != "boom" || e.ErrorID != "BR-01" || e.TestId != "(cbc:ID) != ''" ||
 		e.Xpath != "/Invoice[1]" || e.Location != "line 12, col 3" {
 		t.Errorf("error mapping wrong: %+v", e)
 	}
-	if w := layer.Warnings[0]; w.Message != "careful" || w.TestId != "BR-02" {
+	if w := layer.Warnings[0]; w.Message != "careful" || w.ErrorID != "BR-02" || w.TestId != "not(cbc:Note)" {
 		t.Errorf("warning mapping wrong: %+v", w)
 	}
 }
