@@ -99,17 +99,20 @@ schematron-xslt2 (ROeFactura-UBL-validation-Invoice_v1.0.9.xslt):
 phorm is a Java service. Run the upstream image directly:
 
 ```bash
+docker run -d --name phorm -p 8080:8080 phax/phorm
+```
+
+To have failed validations answered with 200 instead of 400:
+
+```bash
 docker run -d --name phorm -p 8080:8080 -e PHORM_API_RESPONSE_ONFAILURE_HTTP400=false phax/phorm
 ```
 
 Key phorm settings:
 
 - `phorm.api.requiredtoken` — the `X-Token` the client must send.
-- `phorm.api.response.onfailure.http400` — must be `false`
-  (`PHORM_API_RESPONSE_ONFAILURE_HTTP400=false` on the container). phorm
-  defaults to `true` and answers every failed validation with a 400, which this
-  client returns as an error, so `Success == false` and `Report()` are never
-  reached.
+- `phorm.api.response.onfailure.http400` — whether a failed validation is
+  answered with 400 (default `true`) or 200.
 - `webapp.datapath` — configuration and data location.
 
 ## Migration from the phive gRPC client
