@@ -64,6 +64,9 @@ func main() {
 		log.Fatal(err) // transport / HTTP-level failure
 	}
 	fmt.Printf("Valid: %v\n", result.Success)
+	if !result.Success {
+		fmt.Println(result.Report())
+	}
 }
 ```
 
@@ -71,17 +74,42 @@ A non-nil error from `ValidateXml`/`ListVesIds` is a transport or HTTP-level
 failure (service unreachable, bad `X-Token` → 403, malformed XML → 400).
 Validation findings live in `result.Results[].Errors` / `.Warnings`.
 
+### Rendering a report
+
+`result.Report()` turns the findings into one human readable block, ready to put
+in an error message. It works for any VESID:
+
+```
+validation failed: 1 error against ro.gov.mfinante.cius-ro:ubl-invoice:1.0.9
+
+schematron-xslt2 (ROeFactura-UBL-validation-Invoice_v1.0.9.xslt):
+  1) ERROR [BR-RO-110] If the Seller's country Code (BT-40) is RO, then ...
+     at /:Invoice[1]
+```
+
+- Errors come before warnings, grouped by validation layer, and artifact paths
+  are cut down to the file name.
+- The rule id a message repeats (`[BR-01]-…`, `BR-01: …`) is dropped, since it
+  is already shown in brackets.
+- At most 25 problems are listed; the header still counts all of them.
+- A passing result reads `validation passed: …`, with any warnings listed.
+
 ## Running phorm
 
 phorm is a Java service. Run the upstream image directly:
 
 ```bash
-docker run -d --name phorm -p 8080:8080 phax/phorm
+docker run -d --name phorm -p 8080:8080 -e PHORM_API_RESPONSE_ONFAILURE_HTTP400=false phax/phorm
 ```
 
 Key phorm settings:
 
 - `phorm.api.requiredtoken` — the `X-Token` the client must send.
+- `phorm.api.response.onfailure.http400` — must be `false`
+  (`PHORM_API_RESPONSE_ONFAILURE_HTTP400=false` on the container). phorm
+  defaults to `true` and answers every failed validation with a 400, which this
+  client returns as an error, so `Success == false` and `Report()` are never
+  reached.
 - `webapp.datapath` — configuration and data location.
 
 ## Migration from the phive gRPC client
