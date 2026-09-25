@@ -64,9 +64,19 @@ func New(baseURL, token string, opts ...Option) *Client {
 }
 
 // ValidateXml validates req.XmlContent against req.Vesid via
-// POST /api/validate/{vesid}. A non-nil error indicates a transport/HTTP-level
-// failure (unreachable service, bad token, malformed XML rejected with 400,
-// etc.); validation findings are carried in the returned response.
+// POST /api/validate/{vesid}.
+//
+// phorm answers a document that breaks a rule with HTTP 400 and the validation
+// report as the body, so the status code alone cannot tell a failed validation
+// from a rejected request: an unresolvable VESID and a body that is not XML are
+// also 400, and a bad token is 403. What separates them is the body, which is
+// the JSON report only when the validation actually ran.
+//
+// A report is therefore returned as a response whatever the status, with the
+// findings in resp.Results and resp.Success reporting the outcome. A non-nil
+// error means the request never produced a report — the service is unreachable,
+// the token was rejected, the VESID could not be resolved, or the document was
+// not readable as XML.
 func (c *Client) ValidateXml(ctx context.Context, req *ValidateXmlRequest) (*ValidateXmlResponse, error) {
 	endpoint := c.baseURL + "/api/validate/" + url.PathEscape(req.Vesid)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(req.XmlContent))
@@ -79,16 +89,30 @@ func (c *Client) ValidateXml(ctx context.Context, req *ValidateXmlRequest) (*Val
 		httpReq.Header.Set(tokenHeader, c.token)
 	}
 
-	body, err := c.do(httpReq)
+	res, body, err := c.do(httpReq)
 	if err != nil {
 		return nil, err
 	}
 
 	var pr phormValidationResult
-	if err := json.Unmarshal(body, &pr); err != nil {
-		return nil, fmt.Errorf("phorm: decoding validate response: %w", err)
+	jsonErr := json.Unmarshal(body, &pr)
+
+	// A 2xx from the validate endpoint is always the report.
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		if jsonErr != nil {
+			return nil, fmt.Errorf("phorm: %s %s: decoding validate response: %w",
+				httpReq.Method, httpReq.URL, jsonErr)
+		}
+		return pr.toResponse(), nil
 	}
-	return pr.toResponse(), nil
+
+	// Otherwise the status is ambiguous, and only a body that carries the
+	// report is a validation that ran and failed.
+	if jsonErr == nil && pr.isReport() {
+		return pr.toResponse(), nil
+	}
+	return nil, fmt.Errorf("phorm: %s %s: %s: %s",
+		httpReq.Method, httpReq.URL, res.Status, truncate(body, 512))
 }
 
 // ListVesIds lists the available VESIDs via GET /api/get/vesids. req.Filter, if
@@ -104,23 +128,26 @@ func (c *Client) ListVesIds(ctx context.Context, req *ListVesIdsRequest) (*ListV
 		httpReq.Header.Set(tokenHeader, c.token)
 	}
 
-	body, err := c.do(httpReq)
+	res, body, err := c.do(httpReq)
 	if err != nil {
 		return nil, err
 	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("phorm: %s %s: %s: %s",
+			httpReq.Method, httpReq.URL, res.Status, truncate(body, 512))
+	}
 
-	// phorm returns a bare JSON array of VESID objects.
-	var items []phormVesID
-	if err := json.Unmarshal(body, &items); err != nil {
-		return nil, fmt.Errorf("phorm: decoding vesids response: %w", err)
+	items, err := decodeVesIDs(body)
+	if err != nil {
+		return nil, err
 	}
 
 	filter := strings.ToLower(req.Filter)
 	resp := &ListVesIdsResponse{}
 	for _, it := range items {
 		if filter != "" &&
-			!strings.Contains(strings.ToLower(it.ID), filter) &&
-			!strings.Contains(strings.ToLower(it.DisplayName), filter) {
+			!strings.Contains(strings.ToLower(it.id()), filter) &&
+			!strings.Contains(strings.ToLower(it.name()), filter) {
 			continue
 		}
 		resp.Vesids = append(resp.Vesids, it.toInfo())
@@ -128,24 +155,21 @@ func (c *Client) ListVesIds(ctx context.Context, req *ListVesIdsRequest) (*ListV
 	return resp, nil
 }
 
-// do executes the request and returns the response body, converting non-2xx
-// statuses into errors.
-func (c *Client) do(req *http.Request) ([]byte, error) {
+// do executes the request and returns the response alongside its body. The
+// status is left for the caller to interpret, because phorm uses 400 both for a
+// rejected request and for a document that simply failed validation.
+func (c *Client) do(req *http.Request) (*http.Response, []byte, error) {
 	res, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("phorm: request to %s: %w", req.URL, err)
+		return nil, nil, fmt.Errorf("phorm: request to %s: %w", req.URL, err)
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, fmt.Errorf("phorm: reading response from %s: %w", req.URL, err)
+		return nil, nil, fmt.Errorf("phorm: reading response from %s: %w", req.URL, err)
 	}
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, fmt.Errorf("phorm: %s %s: unexpected status %s: %s",
-			req.Method, req.URL, res.Status, truncate(body, 512))
-	}
-	return body, nil
+	return res, body, nil
 }
 
 // --- phorm JSON wire types (phive's JsonValidationResultListHelper schema) ---
@@ -156,6 +180,14 @@ type phormValidationResult struct {
 		VesID string `json:"vesid"`
 	} `json:"ves"`
 	Results []phormLayerResult `json:"results"`
+}
+
+// isReport reports whether the decoded body is actually a validation report
+// rather than some other JSON phorm happened to return. The validation layers
+// and the resolved VES are the parts only a real report carries; `success`
+// alone is not enough, as it decodes from any JSON object.
+func (r phormValidationResult) isReport() bool {
+	return len(r.Results) > 0 || r.Ves != nil
 }
 
 type phormLayerResult struct {
@@ -188,10 +220,33 @@ type phormErrorItem struct {
 	} `json:"errorLocationObj"`
 }
 
+// phormVesID accepts both spellings of a VESID entry. phorm itself sends
+// `vesid` and `name`; `id` and `displayName` are kept because earlier notes on
+// the API described that shape, and tolerating both costs nothing.
 type phormVesID struct {
+	VesID       string `json:"vesid"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 	Deprecated  bool   `json:"deprecated"`
+}
+
+// decodeVesIDs reads the VESID list, which phorm wraps in an object alongside a
+// count. A bare array is also accepted so that either shape decodes.
+func decodeVesIDs(body []byte) ([]phormVesID, error) {
+	var wrapped struct {
+		Vesids []phormVesID `json:"vesids"`
+	}
+	if err := json.Unmarshal(body, &wrapped); err == nil && wrapped.Vesids != nil {
+		return wrapped.Vesids, nil
+	}
+
+	var items []phormVesID
+	if err := json.Unmarshal(body, &items); err != nil {
+		return nil, fmt.Errorf("phorm: decoding vesids response: %w", err)
+	}
+	return items, nil
 }
 
 func (r phormValidationResult) toResponse() *ValidateXmlResponse {
@@ -249,15 +304,30 @@ func (it phormErrorItem) toError() *ValidationError {
 	}
 }
 
+func (v phormVesID) id() string {
+	if v.VesID != "" {
+		return v.VesID
+	}
+	return v.ID
+}
+
+func (v phormVesID) name() string {
+	if v.Name != "" {
+		return v.Name
+	}
+	return v.DisplayName
+}
+
 func (v phormVesID) toInfo() *VesIdInfo {
 	status := "VALID"
 	if v.Deprecated {
 		status = "DEPRECATED"
 	}
 	return &VesIdInfo{
-		Vesid:  v.ID,
-		Name:   v.DisplayName,
-		Status: status,
+		Vesid:   v.id(),
+		Name:    v.name(),
+		Version: v.Version,
+		Status:  status,
 	}
 }
 
