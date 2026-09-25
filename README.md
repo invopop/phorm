@@ -62,10 +62,8 @@ func main() {
 		log.Fatal(err) // the validation never ran; see "Errors vs. findings"
 	}
 	fmt.Printf("Valid: %v\n", result.Success)
-	for _, r := range result.Results {
-		for _, e := range r.Errors {
-			fmt.Printf("  %s: %s\n", e.ErrorID, e.Message)
-		}
+	if !result.Success {
+		fmt.Println(result.Report())
 	}
 }
 ```
@@ -84,6 +82,26 @@ answers one with HTTP 400 and the report as the body, which it also uses for a
 rejected request, so the status alone cannot tell the two apart — the client
 separates them by whether the body is a validation report, and returns the
 report either way.
+
+### Rendering a report
+
+`result.Report()` turns the findings into one human readable block, ready to put
+in an error message. It works for any VESID:
+
+```
+validation failed: 1 error against ro.gov.mfinante.cius-ro:ubl-invoice:1.0.9
+
+schematron-xslt2 (ROeFactura-UBL-validation-Invoice_v1.0.9.xslt):
+  1) ERROR [BR-RO-110] If the Seller's country Code (BT-40) is RO, then ...
+     at /:Invoice[1]
+```
+
+- Errors come before warnings, grouped by validation layer, and artifact paths
+  are cut down to the file name.
+- The rule id a message repeats (`[BR-01]-…`, `BR-01: …`) is dropped, since it
+  is already shown in brackets.
+- At most 25 problems are listed; the header still counts all of them.
+- A passing result reads `validation passed: …`, with any warnings listed.
 
 ## Running phorm
 
@@ -104,10 +122,18 @@ curl -s -o /dev/null -w '%{http_code}\n' \
   'http://localhost:8080/api/get/vesids?include-deprecated=true'
 ```
 
+To have failed validations answered with 200 instead of 400:
+
+```bash
+docker run -d --name phorm -p 8080:8080 -e PHORM_API_RESPONSE_ONFAILURE_HTTP400=false phax/phorm
+```
+
 Key phorm settings:
 
 - `phorm.api.requiredtoken` — the `X-Token` the client must send. Defaults to
   `phorm-dev-token`, which is also this package's `DefaultToken`.
+- `phorm.api.response.onfailure.http400` — whether a failed validation is
+  answered with 400 (default `true`) or 200.
 - `webapp.datapath` — configuration and data location, `/config/phorm` in the
   image. Mount it to keep settings across restarts.
 
