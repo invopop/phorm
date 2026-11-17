@@ -68,6 +68,44 @@ func main() {
 }
 ```
 
+### Validating a hybrid PDF (Factur-X / ZUGFeRD)
+
+`ValidateHybrid` sends a whole hybrid PDF to `POST /api/hybrid_validate`.
+phorm checks the PDF carrier (the BR-HYBRID rules and PDF/A-3 conformance),
+extracts the embedded XML, determines its VESID from the document itself and
+applies its rules, and checks that the XML's specification identifier (BT-24)
+matches the profile in the PDF's XMP metadata (phorm 2.2.13 or later).
+
+```go
+pdf, err := os.ReadFile("invoice.pdf")
+if err != nil {
+	log.Fatal(err)
+}
+hybrid, err := client.ValidateHybrid(ctx, &phorm.ValidateHybridRequest{
+	Country:    "FR", // DE, FR or OTHER (the default); selects BR-HYBRID-<cc>-* rules
+	PdfContent: pdf,
+})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Printf("Valid: %v\n", hybrid.Success)
+if d := hybrid.DocumentDetails; d != nil {
+	fmt.Printf("BT-24: %s\n", d.CustomizationId)
+}
+if !hybrid.Success {
+	fmt.Println(hybrid.Report())
+}
+```
+
+The response embeds a `ValidateXmlResponse`, so `Success`, `Results`,
+`ResolvedVesid` and `Report()` work as for `ValidateXml`. The PDF carrier
+layers (`pdf-hybrid-carrier`) come first; when the XML cannot be extracted or
+resolved, or its BT-24 does not match the PDF (`PHORM-HYBRID-01`), a
+`hybrid-embedded-xml` layer carries the error. `DocumentDetails` describes the
+embedded XML and is nil when it could not be read. The errors-vs-findings rule
+below applies too; a PDF phorm cannot parse at all is an error, even though
+phorm answers it with HTTP 200.
+
 ### Errors vs. findings
 
 Validation findings live in `result.Results[].Errors` / `.Warnings`, and
@@ -143,6 +181,7 @@ Key phorm settings:
 |---|---|
 | `phive.NewValidationServiceClient(conn)` | `phorm.New(baseURL, token)` |
 | `ValidateXml(ctx, req)` | `POST /api/validate/{vesid}`, raw XML body, `X-Token` header |
+| — | `ValidateHybrid(ctx, req)`: `POST /api/hybrid_validate?country=<cc>`, raw PDF body (new) |
 | `ListVesIds(ctx, req)` | `GET /api/get/vesids?include-deprecated=true` (filter applied client-side) |
 | `PHIVE_ADDRESS=phive:50051` | `PHORM_URL=http://phorm:8080` + `PHORM_TOKEN=…` |
 

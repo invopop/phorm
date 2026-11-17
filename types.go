@@ -80,3 +80,38 @@ type ValidationError struct {
 	TestId  string
 	Details map[string]string
 }
+
+// ValidateHybridRequest is a request to validate a hybrid PDF invoice
+// (Factur-X / ZUGFeRD).
+type ValidateHybridRequest struct {
+	// Country is sent as the `country` query parameter and selects the
+	// country-specific BR-HYBRID rules: "DE", "FR" or "OTHER". phorm uses
+	// "OTHER" when it is empty and ignores values it does not know.
+	Country string
+	// PdfContent is the raw PDF request body.
+	PdfContent []byte
+}
+
+// ValidateHybridResponse is the result of a hybrid validation.
+type ValidateHybridResponse struct {
+	ValidateXmlResponse
+	// Country is the country phorm applied, from its `country` field; empty when
+	// the request set none.
+	Country string
+	// DocumentDetails describes the embedded XML, from phorm's
+	// `documentDetails`; nil when the XML could not be extracted or parsed.
+	DocumentDetails *DocumentDetails
+}
+
+// DocumentDetails is what phorm determined about a document from its content.
+type DocumentDetails struct {
+	// SyntaxId is phorm's `syntaxID`, e.g. "cii-d16b".
+	SyntaxId      string
+	SyntaxVersion string
+	// CustomizationId is the specification identifier (BT-24), phorm's
+	// `customizationID`.
+	CustomizationId string
+	// Vesid is the VESID phorm derived from the document.
+	Vesid       string
+	ProfileName string
+}
