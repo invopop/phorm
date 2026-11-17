@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -334,5 +335,179 @@ func TestListVesIdsErrorStatus(t *testing.T) {
 
 	if _, err := New(srv.URL, "tok").ListVesIds(context.Background(), &ListVesIdsRequest{}); err == nil {
 		t.Fatal("expected an error on 403, got nil")
+	}
+}
+
+// A synthetic stand-in for a hybrid PDF; the client only passes the bytes on.
+var hybridPDF = []byte("%PDF-1.7\n%synthetic test payload\n%%EOF\n")
+
+func TestValidateHybrid(t *testing.T) {
+	const body = `{
+	  "country": "FR",
+	  "documentDetails": {
+	    "syntaxID": "cii-d16b",
+	    "syntaxVersion": "D16B",
+	    "customizationID": "urn:cen.eu:en16931:2017",
+	    "vesid": "fr.factur-x:en16931:1.0.8",
+	    "profileName": "Factur-X EN 16931"
+	  },
+	  "success": false,
+	  "ves": {"vesid": "fr.factur-x:en16931:1.0.8"},
+	  "results": [
+	    {
+	      "success": "FALSE",
+	      "validity": "invalid",
+	      "artifactType": "pdf-hybrid-carrier",
+	      "artifactPath": "kaltblut/HybridValidator/BR-HYBRID",
+	      "items": [
+	        {"errorLevel":"ERROR","errorID":"BR-HYBRID-FR-01","errorText":"carrier rule broken","errorFieldName":"/AF"}
+	      ]
+	    },
+	    {
+	      "success": "TRUE",
+	      "validity": "valid",
+	      "artifactType": "pdf-hybrid-carrier",
+	      "artifactPath": "kaltblut/HybridValidator/PDF-A3",
+	      "items": []
+	    },
+	    {
+	      "success": "FALSE",
+	      "validity": "invalid",
+	      "artifactType": "hybrid-embedded-xml",
+	      "artifactPath": "phorm/HybridValidator/EMBEDDED-XML",
+	      "items": [
+	        {"errorLevel":"ERROR","errorID":"PHORM-HYBRID-01","errorText":"BT-24 does not match the XMP profile"}
+	      ]
+	    },
+	    {
+	      "success": "TRUE",
+	      "validity": "valid",
+	      "artifactType": "schematron-xslt2",
+	      "artifactPath": "factur-x/FACTUR-X_EN16931.xslt",
+	      "items": []
+	    }
+	  ],
+	  "invocationDateTime": "2026-11-17T10:00:00Z"
+	}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if got := r.URL.Path; got != "/api/hybrid_validate" {
+			t.Errorf("path = %s", got)
+		}
+		if got := r.URL.Query().Get("country"); got != "FR" {
+			t.Errorf("country = %q, want FR", got)
+		}
+		if got := r.Header.Get("X-Token"); got != "tok" {
+			t.Errorf("X-Token = %q, want tok", got)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/pdf" {
+			t.Errorf("Content-Type = %q", got)
+		}
+		payload, _ := io.ReadAll(r.Body)
+		if string(payload) != string(hybridPDF) {
+			t.Errorf("body = %q", payload)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	resp, err := New(srv.URL, "tok").ValidateHybrid(context.Background(), &ValidateHybridRequest{
+		Country:    "FR",
+		PdfContent: hybridPDF,
+	})
+	if err != nil {
+		t.Fatalf("a failed hybrid validation must not be an error: %v", err)
+	}
+	if resp.Success {
+		t.Error("Success = true, want false")
+	}
+	if resp.Country != "FR" {
+		t.Errorf("Country = %q", resp.Country)
+	}
+	if resp.ResolvedVesid != "fr.factur-x:en16931:1.0.8" {
+		t.Errorf("ResolvedVesid = %q", resp.ResolvedVesid)
+	}
+	d := resp.DocumentDetails
+	if d == nil {
+		t.Fatal("DocumentDetails = nil")
+	}
+	if d.CustomizationId != "urn:cen.eu:en16931:2017" || d.SyntaxId != "cii-d16b" ||
+		d.Vesid != "fr.factur-x:en16931:1.0.8" || d.ProfileName != "Factur-X EN 16931" {
+		t.Errorf("DocumentDetails mapping wrong: %+v", d)
+	}
+	if len(resp.Results) != 4 {
+		t.Fatalf("Results = %d, want 4", len(resp.Results))
+	}
+	if l := resp.Results[0]; l.ValidationType != "pdf-hybrid-carrier" || l.Success || len(l.Errors) != 1 ||
+		l.Errors[0].ErrorID != "BR-HYBRID-FR-01" {
+		t.Errorf("carrier layer mapping wrong: %+v", l)
+	}
+	if l := resp.Results[2]; l.ValidationType != "hybrid-embedded-xml" || len(l.Errors) != 1 ||
+		l.Errors[0].ErrorID != "PHORM-HYBRID-01" {
+		t.Errorf("embedded xml layer mapping wrong: %+v", l)
+	}
+	if !resp.Results[3].Success {
+		t.Error("Results[3].Success = false, want true")
+	}
+	if !strings.Contains(resp.Report(), "BR-HYBRID-FR-01") {
+		t.Errorf("Report() misses the carrier finding:\n%s", resp.Report())
+	}
+}
+
+// Without a country the parameter is left off, so phorm falls back to OTHER.
+func TestValidateHybridNoCountry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "" {
+			t.Errorf("query = %q, want none", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"results":[{"success":"TRUE","validity":"valid","artifactType":"pdf-hybrid-carrier","items":[]}]}`)
+	}))
+	defer srv.Close()
+
+	resp, err := New(srv.URL, "tok").ValidateHybrid(context.Background(), &ValidateHybridRequest{PdfContent: hybridPDF})
+	if err != nil {
+		t.Fatalf("ValidateHybrid: %v", err)
+	}
+	if !resp.Success {
+		t.Error("Success = false, want true")
+	}
+	if resp.DocumentDetails != nil {
+		t.Errorf("DocumentDetails = %+v, want nil", resp.DocumentDetails)
+	}
+}
+
+// Requests that never produce a report must be errors, including the 200 phorm
+// answers with when it cannot parse the PDF at all.
+func TestValidateHybridNoReportIsAnError(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"empty body", http.StatusBadRequest, "The request body is empty"},
+		{"not a pdf", http.StatusBadRequest, "The request body is not a PDF document"},
+		{"bad token", http.StatusForbidden, "<!doctype html><html><title>HTTP Status 403</title></html>"},
+		{"unparseable pdf", http.StatusOK, `{"country":"FR","success":false,"exception":{"class":"java.lang.IllegalStateException","message":"Failed to parse PDF for hybrid validation"},"invocationDateTime":"2026-11-17T10:00:00Z"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			_, err := New(srv.URL, "tok").ValidateHybrid(context.Background(), &ValidateHybridRequest{
+				Country: "FR", PdfContent: hybridPDF,
+			})
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+		})
 	}
 }

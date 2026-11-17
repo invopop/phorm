@@ -115,6 +115,39 @@ func (c *Client) ValidateXml(ctx context.Context, req *ValidateXmlRequest) (*Val
 		httpReq.Method, httpReq.URL, res.Status, truncate(body, 512))
 }
 
+// ValidateHybrid validates a hybrid PDF invoice (Factur-X / ZUGFeRD) via
+// POST /api/hybrid_validate, with the raw PDF as the body and req.Country, when
+// set, as the `country` query parameter.
+func (c *Client) ValidateHybrid(ctx context.Context, req *ValidateHybridRequest) (*ValidateHybridResponse, error) {
+	endpoint := c.baseURL + "/api/hybrid_validate"
+	if req.Country != "" {
+		endpoint += "?" + url.Values{"country": {req.Country}}.Encode()
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(req.PdfContent))
+	if err != nil {
+		return nil, fmt.Errorf("phorm: building request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/pdf")
+	httpReq.Header.Set("Accept", "application/json")
+	if c.token != "" {
+		httpReq.Header.Set(tokenHeader, c.token)
+	}
+
+	res, body, err := c.do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Unlike /api/validate, a 2xx here is not always the report: a PDF phorm
+	// cannot parse comes back as 200 with an exception and no layers.
+	var pr phormHybridResult
+	if err := json.Unmarshal(body, &pr); err == nil && pr.isReport() {
+		return pr.toHybridResponse(), nil
+	}
+	return nil, fmt.Errorf("phorm: %s %s: %s: %s",
+		httpReq.Method, httpReq.URL, res.Status, truncate(body, 512))
+}
+
 // ListVesIds lists the available VESIDs via GET /api/get/vesids. req.Filter, if
 // set, is applied client-side (phorm has no server-side filter).
 func (c *Client) ListVesIds(ctx context.Context, req *ListVesIdsRequest) (*ListVesIdsResponse, error) {
@@ -180,6 +213,25 @@ type phormValidationResult struct {
 		VesID string `json:"vesid"`
 	} `json:"ves"`
 	Results []phormLayerResult `json:"results"`
+}
+
+// phormHybridResult is the hybrid_validate report: the usual validation result
+// plus the country the rules ran for and the details determined from the
+// embedded XML.
+type phormHybridResult struct {
+	phormValidationResult
+	Country         string                `json:"country"`
+	DocumentDetails *phormDocumentDetails `json:"documentDetails"`
+}
+
+// phormDocumentDetails is the subset of ddd's DocumentDetails JSON the client
+// exposes.
+type phormDocumentDetails struct {
+	SyntaxID        string `json:"syntaxID"`
+	SyntaxVersion   string `json:"syntaxVersion"`
+	CustomizationID string `json:"customizationID"`
+	VesID           string `json:"vesid"`
+	ProfileName     string `json:"profileName"`
 }
 
 // isReport reports whether the decoded body is actually a validation report
@@ -256,6 +308,23 @@ func (r phormValidationResult) toResponse() *ValidateXmlResponse {
 	}
 	for _, lr := range r.Results {
 		out.Results = append(out.Results, lr.toLayer())
+	}
+	return out
+}
+
+func (r phormHybridResult) toHybridResponse() *ValidateHybridResponse {
+	out := &ValidateHybridResponse{
+		ValidateXmlResponse: *r.toResponse(),
+		Country:             r.Country,
+	}
+	if d := r.DocumentDetails; d != nil {
+		out.DocumentDetails = &DocumentDetails{
+			SyntaxId:        d.SyntaxID,
+			SyntaxVersion:   d.SyntaxVersion,
+			CustomizationId: d.CustomizationID,
+			Vesid:           d.VesID,
+			ProfileName:     d.ProfileName,
+		}
 	}
 	return out
 }
